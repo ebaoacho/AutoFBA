@@ -1,77 +1,85 @@
-from pathlib import Path
+﻿from pathlib import Path
+import logging
 import os
-from dotenv import load_dotenv
 from datetime import timedelta
+
 from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
-load_dotenv()  # .env を読み込む
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv()
+load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / 'logex_config' / '.env')
 
-# カンマ区切りで分割
 CHATWORK_API_TOKENS = [t.strip() for t in os.getenv('CHATWORK_API_TOKENS', '').split(',') if t.strip()]
 
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
+SECRET_KEY = os.getenv('SECRET_KEY')
+DEBUG = os.getenv('DJANGO_DEBUG', '1') == '1'
 CORS_ALLOW_CREDENTIALS = True
 
-ALLOWED_HOSTS = ["autofba.net", "www.autofba.net"]
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv('DJANGO_ALLOWED_HOSTS', 'autofba.net,www.autofba.net,localhost,127.0.0.1').split(',')
+    if h.strip()
+]
 
 CORS_ALLOWED_ORIGINS = [
-    "https://autofba.net",
-    "https://www.autofba.net",
+    'https://autofba.net',
+    'https://www.autofba.net',
 ]
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://autofba.net",
-    "https://www.autofba.net",
+    'https://autofba.net',
+    'https://www.autofba.net',
 ]
 
-HOSTENV_DIR = "/run/hostenv"
-PRIVATE_IP_FILE = os.path.join(HOSTENV_DIR, "private_ip")
+HOSTENV_DIR = '/run/hostenv'
+PRIVATE_IP_FILE = os.path.join(HOSTENV_DIR, 'private_ip')
 
-def _append_unique(lst, item):
-    if item and item not in lst:
-        lst.append(item)
-        
+
+def _append_unique(values, item):
+    if item and item not in values:
+        values.append(item)
+
+
 try:
     if os.path.exists(PRIVATE_IP_FILE):
-        with open(PRIVATE_IP_FILE, "r", encoding="utf-8") as f:
+        with open(PRIVATE_IP_FILE, 'r', encoding='utf-8') as f:
             private_ip = f.read().strip()
-            if private_ip:
-                # ALLOWED_HOSTS には IP をそのまま
-                _append_unique(ALLOWED_HOSTS, private_ip)
-
-                # Django 4 以降: CORS/CSRF はスキーム必須
-                _append_unique(CORS_ALLOWED_ORIGINS, f"http://{private_ip}")
-                _append_unique(CSRF_TRUSTED_ORIGINS, f"http://{private_ip}")
-
-                # 必要なら https も（ALB/CloudFront 経由など）
-                _append_unique(CORS_ALLOWED_ORIGINS, f"https://{private_ip}")
-                _append_unique(CSRF_TRUSTED_ORIGINS, f"https://{private_ip}")
+        if private_ip:
+            _append_unique(ALLOWED_HOSTS, private_ip)
+            _append_unique(CORS_ALLOWED_ORIGINS, f'http://{private_ip}')
+            _append_unique(CSRF_TRUSTED_ORIGINS, f'http://{private_ip}')
+            _append_unique(CORS_ALLOWED_ORIGINS, f'https://{private_ip}')
+            _append_unique(CSRF_TRUSTED_ORIGINS, f'https://{private_ip}')
 except Exception as e:
-    # 失敗しても起動は続行（ログだけ）
-    import logging
-    logging.getLogger(__name__).warning("Failed to load /run/hostenv/private_ip: %s", e)
+    logging.getLogger(__name__).warning('Failed to load /run/hostenv/private_ip: %s', e)
 
-for h in ["localhost", "127.0.0.1"]:
-    _append_unique(ALLOWED_HOSTS, h)
-for origin in ["http://localhost:3000", "http://127.0.0.1:3000"]:
+for host in ['localhost', '127.0.0.1']:
+    _append_unique(ALLOWED_HOSTS, host)
+for origin in ['http://localhost:3000', 'http://127.0.0.1:3000']:
     _append_unique(CORS_ALLOWED_ORIGINS, origin)
     _append_unique(CSRF_TRUSTED_ORIGINS, origin)
 
 CORS_ALLOW_HEADERS = [
-    "content-type",
-    "authorization",
-    "x-csrftoken",
+    'content-type',
+    'authorization',
+    'x-csrftoken',
+    'x-requested-with',
+    'accept',
+    'origin',
 ]
 
-# Application definition
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_PREFLIGHT_MAX_AGE = 86400
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -87,12 +95,12 @@ INSTALLED_APPS = [
 ]
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "logex_web_app.auth.CookieJWTAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'logex_web_app.auth.CookieJWTAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
     ),
 }
 
@@ -127,100 +135,96 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'logex_config.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv("DB_NAME", "mydb"),
-        'USER': os.getenv("DB_USER", "myuser"),
-        'PASSWORD': os.getenv("DB_PASSWORD", "mypassword"),
-        'HOST': os.getenv("DB_HOST", "logex_db"),
-        'PORT': int(os.getenv("DB_PORT", "5432"))
+        'NAME': os.getenv('DB_NAME', 'mydb'),
+        'USER': os.getenv('DB_USER', 'myuser'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'mypassword'),
+        'HOST': os.getenv('DB_HOST', 'logex_db'),
+        'PORT': int(os.getenv('DB_PORT', '5432')),
     }
 }
 
-
-# Password validation
-# https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/4.2/topics/i18n/
-
 LANGUAGE_CODE = 'ja'
-
 TIME_ZONE = 'Asia/Tokyo'
-
 USE_I18N = True
-
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.2/howto/static-files/
-
 STATIC_URL = 'static/'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "AUTH_HEADER_TYPES": ("Bearer",),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-# ===== JWT クッキー名・属性（集約） =====
-JWT_COOKIE_ACCESS  = os.getenv("JWT_COOKIE_ACCESS",  "atk")
-JWT_COOKIE_REFRESH = os.getenv("JWT_COOKIE_REFRESH", "rtk")
+JWT_COOKIE_ACCESS = os.getenv('JWT_COOKIE_ACCESS', 'atk')
+JWT_COOKIE_REFRESH = os.getenv('JWT_COOKIE_REFRESH', 'rtk')
+JWT_COOKIE_SAMESITE = os.getenv('JWT_COOKIE_SAMESITE', 'None')
+JWT_COOKIE_SECURE = os.getenv('JWT_COOKIE_SECURE', '1') == '1'
+JWT_COOKIE_DOMAIN = os.getenv('JWT_COOKIE_DOMAIN')
+JWT_ACCESS_MAX_AGE = int(os.getenv('JWT_ACCESS_MAX_AGE', str(60 * 60)))
+JWT_REFRESH_MAX_AGE = int(os.getenv('JWT_REFRESH_MAX_AGE', str(14 * 24 * 3600)))
 
-# devがHTTPの場合 SameSite=None は弾かれるため Lax を使うのが無難
-JWT_COOKIE_SAMESITE = os.getenv("JWT_COOKIE_SAMESITE", "None")
-JWT_COOKIE_SECURE   = os.getenv("JWT_COOKIE_SECURE",   "1") == "1"
-JWT_COOKIE_DOMAIN   = os.getenv("JWT_COOKIE_DOMAIN")  # 例: ".autofba.net"（不要なら None）
-
-JWT_ACCESS_MAX_AGE  = int(os.getenv("JWT_ACCESS_MAX_AGE", 60 * 60))          # 1時間
-JWT_REFRESH_MAX_AGE = int(os.getenv("JWT_REFRESH_MAX_AGE", 14 * 24 * 3600))  # 14日
-
-# Cookie をクロスサイトで使う（HTTPS必須）
 SESSION_COOKIE_SAMESITE = 'None'
 CSRF_COOKIE_SAMESITE = 'None'
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-# 単一鍵:  SPAPI_ENCRYPTION_KEY=base64...
-# 複数鍵:  SPAPI_ENCRYPTION_KEYS=new_key,old_key 
-SPAPI_ENCRYPTION_KEYS = os.getenv("SPAPI_ENCRYPTION_KEYS")
-SPAPI_ENCRYPTION_KEY  = os.getenv("SPAPI_ENCRYPTION_KEY")
-if not (SPAPI_ENCRYPTION_KEYS or SPAPI_ENCRYPTION_KEY):
-    raise ImproperlyConfigured("SPAPI_ENCRYPTION_KEY(S) is required for refresh token encryption.")
+SPAPI_ENCRYPTION_KEYS = os.getenv('SPAPI_ENCRYPTION_KEYS')
+SPAPI_ENCRYPTION_KEY = os.getenv('SPAPI_ENCRYPTION_KEY')
 
-# ★（任意だが推奨）鍵の妥当性チェック：形式が不正なら起動時に落として気づく
-try:
-    from cryptography.fernet import Fernet
-    first_key = (SPAPI_ENCRYPTION_KEYS or SPAPI_ENCRYPTION_KEY).split(",")[0].strip()
-    Fernet(first_key)  # 例外が出なければOK
-except Exception as e:
-    raise ImproperlyConfigured(f"SPAPI_ENCRYPTION_KEY(S) is invalid: {e}")
+if SPAPI_ENCRYPTION_KEYS or SPAPI_ENCRYPTION_KEY:
+    try:
+        from cryptography.fernet import Fernet
+
+        first_key = (SPAPI_ENCRYPTION_KEYS or SPAPI_ENCRYPTION_KEY).split(',')[0].strip()
+        Fernet(first_key)
+    except Exception as e:
+        logging.getLogger(__name__).warning('SPAPI_ENCRYPTION_KEY(S) is invalid: %s', e)
+else:
+    logging.getLogger(__name__).warning(
+        'SPAPI_ENCRYPTION_KEY(S) is not configured. Refresh token encryption will not work.'
+    )
+
+SP_API_LWA_CLIENT_ID = os.getenv('SP_API_LWA_CLIENT_ID')
+SP_API_LWA_CLIENT_SECRET = os.getenv('SP_API_LWA_CLIENT_SECRET')
+SP_API_APP_ID = os.getenv('SP_API_APP_ID')
+SP_API_AWS_ACCESS_KEY = os.getenv('SP_API_AWS_ACCESS_KEY')
+SP_API_AWS_SECRET_KEY = os.getenv('SP_API_AWS_SECRET_KEY')
+SP_API_ROLE_ARN = os.getenv('SP_API_ROLE_ARN')
+SP_API_ENDPOINT = os.getenv('SP_API_ENDPOINT', 'https://sellingpartnerapi-fe.amazon.com')
+SP_API_REGION = os.getenv('SP_API_REGION', 'us-west-2')
+SP_API_MARKETPLACE_ID = os.getenv('SP_API_MARKETPLACE_ID', 'A1VC38T7YXB528')
+SP_API_REFRESH_TOKEN_SANDBOX = os.getenv('SP_API_REFRESH_TOKEN_SANDBOX')
+
+if not all([
+    SP_API_LWA_CLIENT_ID,
+    SP_API_LWA_CLIENT_SECRET,
+    SP_API_AWS_ACCESS_KEY,
+    SP_API_AWS_SECRET_KEY,
+    SP_API_ROLE_ARN,
+]):
+    logging.getLogger(__name__).warning(
+        'SP-API credentials are not fully configured. SP-API features will not work.'
+    )
+
+SP_API_LWA_REDIRECT_URI = os.getenv('SP_API_LWA_REDIRECT_URI')
+SP_API_LWA_LOGIN_URI = os.getenv('SP_API_LWA_LOGIN_URI')
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'https://autofba.net').rstrip('/')
+SP_API_LWA_AUTHORIZE_URL = os.getenv(
+    'SP_API_LWA_AUTHORIZE_URL',
+    'https://sellercentral.amazon.co.jp/apps/authorize/consent',
+)
+SP_API_LWA_STATE_TTL = int(os.getenv('SP_API_LWA_STATE_TTL', '900'))

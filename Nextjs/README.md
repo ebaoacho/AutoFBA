@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LOGEX Frontend
 
-## Getting Started
+`Nextjs/` は LOGEX のフロントエンド実装です。  
+Amazon FBA 向けの在庫管理アプリとして、SKU 一覧、発注支援、認証、Amazon 連携導線を提供します。
 
-First, run the development server:
+## 技術スタック
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Next.js 15
+- React 19
+- TypeScript
+- Tailwind CSS 4
+- MUI
+- Recharts
+
+## 主な責務
+
+- SKU 一覧画面の表示
+- 在庫アラートと販売傾向の可視化
+- 発注支援画面の表示
+- ユーザー認証フロー
+- Django API との通信
+- 一部データの CSV フォールバック
+
+## 主要ディレクトリ
+
+```text
+Nextjs/
+├─ src/app/
+│  ├─ components/      # Header, Sidebar などの共通 UI
+│  ├─ hooks/           # カスタムフック
+│  ├─ lib/             # API クライアント、データマージ処理
+│  ├─ login/           # ログイン画面
+│  ├─ register/        # 新規登録画面
+│  ├─ connect-amazon/  # Amazon 連携導線
+│  ├─ products/        # SKU 一覧 / 詳細
+│  ├─ purchase-order/  # 発注支援画面
+│  ├─ bulk-export/     # CSV エクスポート画面
+│  └─ notifications/   # 通知設定画面
+├─ public/data/        # サンプルデータ、生成 JSON
+└─ scripts/            # ビルド前スクリプト
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## ローカル起動
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd Nextjs
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`Nextjs/.env.local` 例:
 
-## Learn More
+```env
+NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
+```
 
-To learn more about Next.js, take a look at the following resources:
+## API 通信
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- API 通信は `src/app/lib/http.ts` に集約
+- Cookie 認証を前提として `credentials: 'include'` を利用
+- 認証 API は `authApi.ts`
+- SP-API 関連は `spapiApi.ts`
+- SKU 設定と FBA 在庫のマージ処理は `fbaData.ts`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## ポートフォリオ上の見どころ
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 業務アプリらしい一覧 UI と判断支援 UI を実装
+- データ取得失敗時に CSV へフォールバックする設計
+- バックエンド API と責務を分離したフロント構成
+- 単純な CRUD ではなく、在庫判断を UI に落とし込んでいる点

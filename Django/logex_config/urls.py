@@ -35,6 +35,16 @@ urlpatterns = [
     path('auth/logout/', views.auth_logout, name='auth-logout'),
     path('auth/me/', views.auth_me, name='auth-me'),
     path('health/', views.health_check, name='health_check'),
-    
+
+    # SP-API接続状態
     path("spapi/connection-status/", views.spapi_connection_status, name="spapi-connection-status"),
+
+    # SP-API統合エンドポイント
+    path("spapi/inventory/", views.spapi_get_inventory, name="spapi-get-inventory"),
+    path("spapi/fees-estimate/", views.spapi_get_fees_estimate, name="spapi-get-fees-estimate"),
+    path("spapi/report/create/", views.spapi_create_report, name="spapi-create-report"),
+    path("spapi/report/<str:report_id>/", views.spapi_get_report_status, name="spapi-get-report-status"),
+    path("spapi/catalog/<str:asin>/", views.spapi_get_catalog_item, name="spapi-get-catalog-item"),
+    path("spapi/orders/", views.spapi_get_orders, name="spapi-get-orders"),
+    path("spapi/financial-events/", views.spapi_get_financial_events, name="spapi-get-financial-events"),
 ]

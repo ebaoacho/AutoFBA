@@ -9,3 +9,5 @@ requests
 python-dateutil
 djangorestframework-simplejwt
 cryptography
+boto3>=1.26.0
+requests-aws4auth>=1.2.0

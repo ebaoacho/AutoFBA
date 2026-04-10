@@ -4,6 +4,7 @@ import Papa from 'papaparse';
 import Link from 'next/link';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import { fetchSkuConfigsWithFBAInventory } from '@/app/lib/fbaData';
 import {
   LineChart,
   Line,
@@ -122,14 +123,9 @@ export default function ProductListPage() {
   );
 
   useEffect(() => {
-    fetch('https://autofba.net/sku-data/all-sku-configs/?history=true')
-      .then((res) => {
-        if (!res.ok) throw new Error(`SKU configs endpoint error: ${res.status}`);
-        return res.json() as Promise<SKUConfig[] | { results: SKUConfig[] }>;
-      })
-      .then((response) => {
-        const configs = Array.isArray(response) ? response : response.results ?? [];
-        const constructedData: ProductData[] = configs.map((config) => ({
+    fetchSkuConfigsWithFBAInventory<SKUConfig>()
+      .then((mergedConfigs) => {
+        const constructedData: ProductData[] = mergedConfigs.map((config) => ({
           出品者SKU: config.sku,
           商品名: config.product_name || `商品-${config.sku}`,
           ASIN: config.asin || '',
@@ -143,7 +139,7 @@ export default function ProductListPage() {
 
         const configMapping: Record<string, SKUConfig> = {};
         const processedSkus = new Set<string>();
-        const sortedConfigs = [...configs].sort((a, b) =>
+        const sortedConfigs = [...mergedConfigs].sort((a, b) =>
           a.sku !== b.sku ? a.sku.localeCompare(b.sku) : (b.data_month || '').localeCompare(a.data_month || '')
         );
         sortedConfigs.forEach((config) => {

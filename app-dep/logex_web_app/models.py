@@ -1,7 +1,7 @@
 # models.py
 from django.db import models
 from django.contrib.auth.models import User
-from core.utils.encryption import encrypt_str, decrypt_str
+from logex_web_app.encryption import encrypt_str, decrypt_str
 
 class ChatworkRoom(models.Model):
     owner = models.ForeignKey(User, related_name='chatwork_rooms', on_delete=models.CASCADE, null=True, blank=True)
@@ -9,6 +9,34 @@ class ChatworkRoom(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     def __str__(self):
         return self.room_id
+
+
+class ReorderNotificationState(models.Model):
+    owner = models.ForeignKey(
+        User,
+        related_name='reorder_notification_states',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    sku = models.CharField(max_length=30, db_index=True)
+    is_active = models.BooleanField(default=False)
+    current_inventory = models.IntegerField(default=0)
+    delivery_point = models.IntegerField(default=0)
+    recommended_delivery_quantity = models.IntegerField(default=0)
+    last_transition_at = models.DateTimeField(auto_now=True)
+    last_notified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['owner', 'sku']
+        indexes = [
+            models.Index(fields=['owner', 'sku', 'is_active']),
+        ]
+
+    def __str__(self):
+        owner_id = self.owner_id if self.owner_id is not None else 'global'
+        return f'{owner_id}:{self.sku}:{self.is_active}'
 
 class SKUConfig(models.Model):
     owner = models.ForeignKey(User, related_name='sku_configs', on_delete=models.CASCADE, null=True, blank=True)

@@ -427,3 +427,277 @@ def spapi_connection_status(request):
         refresh_token_enc__isnull=False
     ).exists()
     return Response({"has_refresh_token": has_token})
+
+
+# ==================== SP-API Integration Endpoints ====================
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_inventory(request):
+    """
+    FBA在庫情報を取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得（最初のSKU設定から）
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        # Sandbox用のトークンを使用（テスト環境）
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        inventory_data = client.get_inventory_summaries()
+        return Response(inventory_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def spapi_get_fees_estimate(request):
+    """
+    商品の手数料見積もりを取得
+
+    Request body:
+    {
+        "asin": "B0XXXXXXXX",
+        "price": 1500
+    }
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    asin = request.data.get("asin")
+    price = request.data.get("price")
+
+    if not asin or not price:
+        return Response({"error": "asinとpriceが必要です"}, status=400)
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        fees_data = client.get_my_fees_estimate(asin, float(price))
+        return Response(fees_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def spapi_create_report(request):
+    """
+    SP-APIレポートを生成
+
+    Request body:
+    {
+        "report_type": "GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA"
+    }
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    report_type = request.data.get("report_type")
+
+    if not report_type:
+        return Response({"error": "report_typeが必要です"}, status=400)
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        report_data = client.create_report(report_type)
+        return Response(report_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_report_status(request, report_id):
+    """
+    レポートのステータスを取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        report_status = client.get_report(report_id)
+        return Response(report_status)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_catalog_item(request, asin):
+    """
+    カタログアイテム情報（サイズ、重量等）を取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        catalog_data = client.get_catalog_item(asin)
+        return Response(catalog_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_orders(request):
+    """
+    注文情報を取得
+
+    Query params:
+    - created_after: ISO8601形式の日時
+    - created_before: ISO8601形式の日時（オプション）
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    created_after = request.GET.get("created_after")
+
+    if not created_after:
+        return Response({"error": "created_afterパラメータが必要です"}, status=400)
+
+    created_before = request.GET.get("created_before")
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        orders_data = client.get_orders(created_after, created_before)
+        return Response(orders_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_financial_events(request):
+    """
+    財務イベント（入金、手数料等）を取得
+
+    Query params:
+    - posted_after: ISO8601形式の日時（オプション）
+    - posted_before: ISO8601形式の日時（オプション）
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    posted_after = request.GET.get("posted_after")
+    posted_before = request.GET.get("posted_before")
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        financial_data = client.list_financial_events(posted_after, posted_before)
+        return Response(financial_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

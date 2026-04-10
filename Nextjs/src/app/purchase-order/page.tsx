@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { fetchSkuConfigsWithFBAInventory } from '@/app/lib/fbaData';
 
 interface SKUConfig {
   sku: string;
@@ -20,12 +21,9 @@ export default function PurchaseOrderPage() {
   const [configs, setConfigs] = useState<SKUConfig[]>([]);
 
   useEffect(() => {
-    fetch('https://autofba.net/sku-data/all-sku-configs/')
-      .then((res) => res.json())
+    fetchSkuConfigsWithFBAInventory<SKUConfig>()
       .then((data) => {
-        if (data?.results) {
-          setConfigs(data.results);
-        }
+        setConfigs(data);
       })
       .catch((err) => console.error('在庫データの取得エラー:', err));
   }, []);

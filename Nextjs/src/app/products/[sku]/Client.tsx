@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { notFound } from 'next/navigation';
+import { apiFetch } from '@/app/lib/http';
+import { fetchSkuConfigsWithFBAInventory } from '@/app/lib/fbaData';
 import {
   LineChart,
   Line,
@@ -126,10 +128,7 @@ export default function Client({ sku }: ProductDetailClientProps) {
   // 履歴データ
   const fetchHistoryData = useCallback(async (config: SKUConfig | null) => {
     try {
-      const res = await fetch(`https://autofba.net/sku-data/sku-history/${sku}/`);
-      if (!res.ok) return false;
-
-      const response = (await res.json()) as HistoryResponse;
+      const response = await apiFetch<HistoryResponse>(`/sku-data/sku-history/${sku}/`);
       const converted: ProductData[] = response.history.map((item) => ({
         出品者SKU: item.sku,
         商品名: config?.product_name || item.product_name || `商品-${item.sku}`,
@@ -154,10 +153,9 @@ export default function Client({ sku }: ProductDetailClientProps) {
   // 設定
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await fetch(`https://autofba.net/sku-data/sku-config/${sku}/`);
-      if (!res.ok) return null;
-
-      const data = (await res.json()) as SKUConfig;
+      const configs = await fetchSkuConfigsWithFBAInventory<SKUConfig>();
+      const data = configs.find((item) => item.sku === sku) ?? null;
+      if (!data) return null;
       setCurrentConfig(data);
       setSecureDays(Number(data.secure_days) || 30);
       setDeliveryDays(Number(data.delivery_days) || 45);
@@ -174,10 +172,7 @@ export default function Client({ sku }: ProductDetailClientProps) {
   // 分析
   const fetchAnalyticsData = useCallback(async () => {
     try {
-      const res = await fetch(`https://autofba.net/sku-data/sku-analytics/${sku}/`);
-      if (!res.ok) return false;
-
-      const data = (await res.json()) as Analytics;
+      const data = await apiFetch<Analytics>(`/sku-data/sku-analytics/${sku}/`);
       setAnalyticsData(data);
       return true;
     } catch (e) {
@@ -321,21 +316,14 @@ export default function Client({ sku }: ProductDetailClientProps) {
         is_target: currentConfig?.is_target || false,
       };
 
-      const res = await fetch(`https://autofba.net/sku-data/sku-config/${sku}/`, {
+      const updated = await apiFetch<SKUConfig>(`/sku-data/sku-config/${sku}/`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       });
 
-      if (res.ok) {
-        const updated = (await res.json()) as SKUConfig;
         setCurrentConfig(updated);
         await fetchAnalyticsData();
         alert('設定を保存しました');
-      } else {
-        console.error('保存失敗詳細:', await res.text());
-        alert(`保存に失敗しました: ${res.status} ${res.statusText}`);
-      }
     } catch (e) {
       console.error('保存エラー:', e);
       alert('保存中にエラーが発生しました');

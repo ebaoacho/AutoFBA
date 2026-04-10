@@ -34,5 +34,23 @@ urlpatterns = [
     path('auth/login/', views.auth_login, name='auth-login'),
     path('auth/logout/', views.auth_logout, name='auth-logout'),
     path('auth/me/', views.auth_me, name='auth-me'),
-    path('health/', views.health_check, name='health_check')
+    path('health/', views.health_check, name='health_check'),
+
+    # SP-API接続状態
+    path("spapi/connection-status/", views.spapi_connection_status, name="spapi-connection-status"),
+
+    # SP-API LWA 認可フロー
+    path("api/spapi/auth/start/", views.spapi_authorize_start, name="spapi-authorize-start"),
+    path("api/spapi/auth/login/", views.spapi_authorize_login, name="spapi-authorize-login"),
+    path("api/spapi/auth/callback/", views.spapi_authorize_callback, name="spapi-authorize-callback"),
+
+    # SP-API統合エンドポイント
+    path("api/spapi/save-refresh-token/", views.spapi_save_refresh_token, name="spapi-save-refresh-token"),
+    path("api/spapi/inventory/", views.spapi_get_inventory, name="spapi-get-inventory"),
+    path("api/spapi/fees-estimate/", views.spapi_get_fees_estimate, name="spapi-get-fees-estimate"),
+    path("api/spapi/report/create/", views.spapi_create_report, name="spapi-create-report"),
+    path("api/spapi/report/<str:report_id>/", views.spapi_get_report_status, name="spapi-get-report-status"),
+    path("api/spapi/catalog/<str:asin>/", views.spapi_get_catalog_item, name="spapi-get-catalog-item"),
+    path("api/spapi/orders/", views.spapi_get_orders, name="spapi-get-orders"),
+    path("api/spapi/financial-events/", views.spapi_get_financial_events, name="spapi-get-financial-events"),
 ]

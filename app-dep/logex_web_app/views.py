@@ -1,12 +1,16 @@
 import requests
+import uuid
 from datetime import datetime
+from urllib.parse import urlencode
 from dateutil import parser
 import csv
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import OuterRef, Subquery, Max
-from django.http import HttpResponse, JsonResponse
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
+from django.core.cache import cache
+from django.contrib.auth import get_user_model
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
@@ -413,7 +417,6 @@ def auth_me(request):
     return Response(UserSerializer(request.user).data, status=200)
 
 @api_view(["GET"])
-@authentication_classes([])
 @permission_classes([AllowAny])
 def health_check(request):
     return JsonResponse({'status': 'ok'}, status=200)
@@ -429,3 +432,437 @@ def spapi_connection_status(request):
         refresh_token_enc__isnull=False
     ).exists()
     return Response({"has_refresh_token": has_token})
+
+
+# ==================== SP-API Auth Flow (LWA) ====================
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_authorize_start(request):
+    """
+    Seller Central の同意画面URLを返す。state をキャッシュに保持して CSRF を防止する。
+    """
+    if not getattr(settings, "SP_API_APP_ID", None):
+        return Response(
+            {"error": "SP_API_APP_ID is not configured on the server."},
+            status=500,
+        )
+
+    if not settings.SP_API_LWA_CLIENT_ID or not settings.SP_API_LWA_CLIENT_SECRET:
+        return Response(
+            {"error": "SP-API LWA client credentials are not configured."},
+            status=500,
+        )
+
+    redirect_uri = getattr(settings, "SP_API_LWA_REDIRECT_URI", None)
+    if not redirect_uri:
+        return Response(
+            {"error": "SP_API_LWA_REDIRECT_URI is not configured on the server."},
+            status=500,
+        )
+
+    state = uuid.uuid4().hex
+    cache_key = f"spapi_lwa_state:{state}"
+    cache.set(
+        cache_key,
+        {"user_id": request.user.id},
+        timeout=getattr(settings, "SP_API_LWA_STATE_TTL", 900),
+    )
+
+    from .spapi_auth import LWAClient
+
+    authorization_url = LWAClient.build_authorization_url(state, redirect_uri)
+    return Response(
+        {
+            "authorization_url": authorization_url,
+            "state": state,
+            "redirect_uri": redirect_uri,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def spapi_authorize_login(request):
+    amazon_callback_uri = request.GET.get("amazon_callback_uri")
+    amazon_state = request.GET.get("amazon_state")
+    state = request.GET.get("state")
+    selling_partner_id = request.GET.get("selling_partner_id")
+
+    frontend_url = getattr(settings, "FRONTEND_BASE_URL", "https://autofba.net").rstrip("/")
+
+    def redirect_to_frontend(status_value: str, message: str):
+        query = urlencode({"status": status_value, "message": message})
+        return HttpResponseRedirect(f"{frontend_url}/connect-amazon/?{query}")
+
+    if not amazon_callback_uri or not amazon_state:
+        return redirect_to_frontend("error", "amazon_callback_uri and amazon_state are required")
+
+    params = {"amazon_state": amazon_state}
+    if state:
+        params["state"] = state
+    if selling_partner_id:
+        params["selling_partner_id"] = selling_partner_id
+
+    separator = "&" if "?" in amazon_callback_uri else "?"
+    return HttpResponseRedirect(f"{amazon_callback_uri}{separator}{urlencode(params)}")
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def spapi_authorize_callback(request):
+    """
+    Amazon からのリダイレクトを受け取り、authorization_code を refresh_token に交換して保存する。
+    state から紐づくユーザーをキャッシュ越しに特定し、トークンを暗号化保存する。
+    """
+    code = request.GET.get("spapi_oauth_code") or request.GET.get("code")
+    state = request.GET.get("state")
+    selling_partner_id = request.GET.get("selling_partner_id")
+
+    frontend_url = getattr(settings, "FRONTEND_BASE_URL", "https://autofba.net").rstrip("/")
+
+    def redirect_to_frontend(status_value: str, message: str, extra_params=None):
+        params = {"status": status_value, "message": message}
+        if extra_params:
+            params.update(extra_params)
+        query = urlencode(params)
+        return HttpResponseRedirect(f"{frontend_url}/connect-amazon/?{query}")
+
+    if not code or not state:
+        return redirect_to_frontend("error", "code and state are required")
+
+    cache_key = f"spapi_lwa_state:{state}"
+    state_data = cache.get(cache_key)
+    cache.delete(cache_key)
+
+    if not state_data or "user_id" not in state_data:
+        return redirect_to_frontend("error", "invalid or expired state")
+
+    User = get_user_model()
+    user = User.objects.filter(id=state_data["user_id"]).first()
+    if not user:
+        return redirect_to_frontend("error", "user not found for state")
+
+    redirect_uri = getattr(settings, "SP_API_LWA_REDIRECT_URI", None)
+    if not redirect_uri:
+        return redirect_to_frontend("error", "SP_API_LWA_REDIRECT_URI is not configured on the server.")
+
+    from .spapi_auth import LWAClient
+
+    try:
+        token_response = LWAClient.exchange_authorization_code(code, redirect_uri)
+        refresh_token = token_response.get("refresh_token")
+        if not refresh_token:
+            return redirect_to_frontend("error", "refresh_token missing in LWA response")
+
+        sku_config = SKUConfig.objects.filter(owner=user).first()
+        if not sku_config:
+            sku_config = SKUConfig.objects.create(
+                owner=user,
+                sku="__sp_api_token__",
+                data_month=datetime.now().strftime('%Y-%m'),
+                product_name="SP-API Token Storage",
+            )
+
+        sku_config.set_refresh_token(refresh_token.strip())
+        sku_config.save()
+
+        extra_params = {}
+        if selling_partner_id:
+            extra_params["selling_partner_id"] = selling_partner_id
+        return redirect_to_frontend(
+            "success",
+            "SP-API refresh token stored via LWA authorization.",
+            extra_params,
+        )
+    except Exception as e:
+        return redirect_to_frontend("error", str(e))
+
+
+# ==================== SP-API Integration Endpoints ====================
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_inventory(request):
+    """
+    FBA在庫情報を取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得（最初のSKU設定から）
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        # Sandbox用のトークンを使用（テスト環境）
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        inventory_data = client.get_inventory_summaries()
+        return Response(inventory_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def spapi_get_fees_estimate(request):
+    """
+    商品の手数料見積もりを取得
+
+    Request body:
+    {
+        "asin": "B0XXXXXXXX",
+        "price": 1500
+    }
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    asin = request.data.get("asin")
+    price = request.data.get("price")
+
+    if not asin or not price:
+        return Response({"error": "asinとpriceが必要です"}, status=400)
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        fees_data = client.get_my_fees_estimate(asin, float(price))
+        return Response(fees_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def spapi_create_report(request):
+    """
+    SP-APIレポートを生成
+
+    Request body:
+    {
+        "report_type": "GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA"
+    }
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    report_type = request.data.get("report_type")
+
+    if not report_type:
+        return Response({"error": "report_typeが必要です"}, status=400)
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        report_data = client.create_report(report_type)
+        return Response(report_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_report_status(request, report_id):
+    """
+    レポートのステータスを取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        report_status = client.get_report(report_id)
+        return Response(report_status)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_catalog_item(request, asin):
+    """
+    カタログアイテム情報（サイズ、重量等）を取得
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        catalog_data = client.get_catalog_item(asin)
+        return Response(catalog_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_orders(request):
+    """
+    注文情報を取得
+
+    Query params:
+    - created_after: ISO8601形式の日時
+    - created_before: ISO8601形式の日時（オプション）
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    created_after = request.GET.get("created_after")
+
+    if not created_after:
+        return Response({"error": "created_afterパラメータが必要です"}, status=400)
+
+    created_before = request.GET.get("created_before")
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        orders_data = client.get_orders(created_after, created_before)
+        return Response(orders_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def spapi_get_financial_events(request):
+    """
+    財務イベント（入金、手数料等）を取得
+
+    Query params:
+    - posted_after: ISO8601形式の日時（オプション）
+    - posted_before: ISO8601形式の日時（オプション）
+    """
+    from .spapi_client import SPAPIClient
+    from django.conf import settings
+
+    posted_after = request.GET.get("posted_after")
+    posted_before = request.GET.get("posted_before")
+
+    # ユーザーのリフレッシュトークンを取得
+    sku_config = SKUConfig.objects.filter(
+        owner=request.user,
+        refresh_token_enc__isnull=False
+    ).first()
+
+    if not sku_config:
+        refresh_token = settings.SP_API_REFRESH_TOKEN_SANDBOX
+        if not refresh_token:
+            return Response(
+                {"error": "SP-APIリフレッシュトークンが設定されていません"},
+                status=400
+            )
+    else:
+        refresh_token = sku_config.get_refresh_token()
+
+    try:
+        client = SPAPIClient(refresh_token)
+        financial_data = client.list_financial_events(posted_after, posted_before)
+        return Response(financial_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def spapi_save_refresh_token(request):
+    """
+    旧来の「リフレッシュトークン直接POST」は禁止。
+    LWA 認可フロー（/api/spapi/auth/start -> /api/spapi/auth/callback）を利用してください。
+    """
+    return Response(
+        {
+            "error": "Direct refresh_token POST is disabled. Use /api/spapi/auth/start to authorize via Seller Central."
+        },
+        status=400,
+    )
